@@ -8,12 +8,12 @@
 //    Mientras esté "PEGA_AQUI", la web funciona en MODO DEMO
 //    (guarda los datos solo en tu navegador, ideal para probar).
 export const firebaseConfig = {
-  apiKey: "PEGA_AQUI",
+  apiKey: "AIzaSyCHJADiDHbmm2OvyOfbtAhzBj0h9AeKO0s",
   authDomain: "comunion-niobe.firebaseapp.com",
   projectId: "comunion-niobe",
   storageBucket: "comunion-niobe.firebasestorage.app",
-  messagingSenderId: "PEGA_AQUI",
-  appId: "PEGA_AQUI",
+  messagingSenderId: "621608821166",
+  appId: "1:621608821166:web:f787f4ecdfaa43c0c2a83f",
 };
 
 // 2) Correos que pueden entrar al panel de organización (admin.html).
