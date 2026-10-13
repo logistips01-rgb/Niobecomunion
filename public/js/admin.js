@@ -1,0 +1,248 @@
+import { admins, menus, regalos, temas } from "./config.js";
+import * as datos from "./db.js";
+
+const $ = (sel) => document.querySelector(sel);
+const esc = (t) =>
+  String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const nombreMenu = (id) => menus.find((m) => m.id === id)?.nombre ?? id;
+const fecha = (iso) => (iso ? new Date(iso).toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" }) : "");
+
+let confirmaciones = [];
+let listaFotos = [];
+
+$("#btn-entrar").addEventListener("click", async () => {
+  try {
+    const usuario = await datos.iniciarSesion();
+    if (!datos.modoDemo && !admins.includes(usuario.email)) {
+      await datos.cerrarSesion();
+      $("#error-acceso").textContent = `${usuario.email} no tiene permiso. Añádelo en config.js y firestore.rules.`;
+      return;
+    }
+    $("#acceso").hidden = true;
+    $("#panel").hidden = false;
+    cargar();
+  } catch (e) {
+    console.error(e);
+    $("#error-acceso").textContent = "No se ha podido iniciar sesión.";
+  }
+});
+
+$("#btn-salir").addEventListener("click", async () => {
+  await datos.cerrarSesion();
+  location.reload();
+});
+$("#btn-recargar").addEventListener("click", cargar);
+
+async function cargar() {
+  const [conf, reservas, mensajes, fotos, comentarios] = await Promise.all([
+    datos.leerConfirmaciones(),
+    datos.leerReservasDetalle(),
+    datos.leerMensajes(),
+    datos.leerTodasLasFotos(),
+    datos.leerComentariosFotos(),
+  ]);
+  listaFotos = fotos;
+  pintarAjustes(await datos.leerAjustes());
+  confirmaciones = conf.sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+
+  // Resumen
+  const si = confirmaciones.filter((c) => c.asiste);
+  const personas = si.flatMap((c) => c.personas || []);
+  const porMenu = menus.map((m) => ({ ...m, total: personas.filter((p) => p.menu === m.id).length }));
+  $("#resumen").innerHTML = [
+    ["Familias que vienen", si.length],
+    ["Personas en total", personas.length],
+    ["No pueden venir", confirmaciones.length - si.length],
+    ...porMenu.map((m) => [m.nombre, m.total]),
+    ["Regalos reservados", `${reservas.length}/${regalos.length}`],
+    ["Fotos subidas", fotos.length],
+  ]
+    .map(([t, n]) => `<div class="tarjeta"><strong>${n}</strong>${esc(t)}</div>`)
+    .join("");
+
+  // Confirmaciones
+  $("#tabla-confirmaciones").innerHTML =
+    "<tr><th>Familia</th><th>¿Viene?</th><th>Personas y menú</th><th>Alergias</th><th>Teléfono</th><th>Comentarios</th><th>Fecha</th></tr>" +
+    confirmaciones
+      .map(
+        (c) => `<tr>
+          <td>${esc(c.familia)}</td>
+          <td>${c.asiste ? "Sí" : "No"}</td>
+          <td>${(c.personas || []).map((p) => `${esc(p.nombre)} — ${esc(nombreMenu(p.menu))}`).join("<br>")}</td>
+          <td>${esc(c.alergias)}</td>
+          <td>${esc(c.telefono)}</td>
+          <td>${esc(c.comentarios)}</td>
+          <td>${fecha(c.fecha)}</td>
+        </tr>`
+      )
+      .join("");
+
+  // Regalos
+  $("#tabla-regalos").innerHTML =
+    "<tr><th>Regalo</th><th>Reservado por</th><th>Fecha</th><th></th></tr>" +
+    reservas
+      .map(
+        (r) => `<tr>
+          <td>${esc(regalos.find((g) => g.id === r.regalo)?.nombre ?? r.regalo)}</td>
+          <td>${esc(r.nombre)}</td>
+          <td>${fecha(r.fecha)}</td>
+          <td><button class="boton boton-suave boton-peque" data-liberar="${esc(r.regalo)}">Liberar</button></td>
+        </tr>`
+      )
+      .join("");
+
+  // Fotos
+  const contenedor = $("#fotos-admin");
+  contenedor.innerHTML = fotos.length ? "" : '<p class="suave">Todavía no hay fotos.</p>';
+  for (const f of fotos) {
+    const fig = document.createElement("figure");
+    const img = document.createElement("img");
+    img.src = f.mini;
+    img.loading = "lazy";
+    const pie = document.createElement("figcaption");
+    const autor = document.createElement("span");
+    autor.textContent = f.nombre || "Anónimo";
+    const borrar = document.createElement("button");
+    borrar.className = "boton boton-suave boton-peque";
+    borrar.dataset.borrarFoto = f.id;
+    borrar.textContent = "Borrar";
+    pie.append(autor, borrar);
+    fig.append(img, pie);
+    contenedor.append(fig);
+  }
+
+  // Comentarios de las fotos
+  const miniDe = (id) => fotos.find((f) => f.id === id)?.mini ?? "";
+  $("#tabla-comentarios").innerHTML =
+    "<tr><th>Foto</th><th>Nombre</th><th>Comentario</th><th>Fecha</th><th></th></tr>" +
+    comentarios
+      .sort((a, b) => (a.fecha < b.fecha ? 1 : -1))
+      .map(
+        (c) => `<tr>
+          <td><img src="${esc(miniDe(c.fotoId))}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:6px"></td>
+          <td>${esc(c.nombre)}</td>
+          <td>${esc(c.texto)}</td>
+          <td>${fecha(c.fecha)}</td>
+          <td><button class="boton boton-suave boton-peque" data-borrar-comentario="${esc(c.id)}" data-foto="${esc(c.fotoId)}">Borrar</button></td>
+        </tr>`
+      )
+      .join("");
+
+  // Mensajes
+  $("#tabla-mensajes").innerHTML =
+    "<tr><th>Nombre</th><th>Mensaje</th><th>Fecha</th><th></th></tr>" +
+    mensajes
+      .map(
+        (m) => `<tr>
+          <td>${esc(m.nombre)}</td>
+          <td>${esc(m.texto)}</td>
+          <td>${fecha(m.fecha)}</td>
+          <td><button class="boton boton-suave boton-peque" data-borrar="${esc(m.id)}">Borrar</button></td>
+        </tr>`
+      )
+      .join("");
+}
+
+document.addEventListener("click", async (e) => {
+  const { liberar, borrar, borrarFoto, borrarComentario, foto } = e.target.dataset ?? {};
+  if (borrarComentario && confirm("¿Borrar este comentario?")) {
+    await datos.borrarComentarioFoto(foto, borrarComentario);
+    cargar();
+  }
+  if (borrarFoto && confirm("¿Borrar esta foto?")) {
+    await datos.borrarFoto(borrarFoto);
+    cargar();
+  }
+  if (liberar && confirm("¿Liberar este regalo para que otro invitado pueda reservarlo?")) {
+    await datos.liberarRegalo(liberar);
+    cargar();
+  }
+  if (borrar && confirm("¿Borrar este mensaje?")) {
+    await datos.borrarMensaje(borrar);
+    cargar();
+  }
+});
+
+// Exportar a CSV (se abre con Excel): una fila por persona
+$("#btn-csv").addEventListener("click", () => {
+  const filas = [["Familia", "Viene", "Persona", "Menú", "Alergias", "Teléfono", "Comentarios"]];
+  for (const c of confirmaciones) {
+    const personas = c.personas?.length ? c.personas : [{ nombre: "", menu: "" }];
+    for (const p of personas) {
+      filas.push([c.familia, c.asiste ? "Sí" : "No", p.nombre, p.menu ? nombreMenu(p.menu) : "", c.alergias, c.telefono, c.comentarios]);
+    }
+  }
+  const csv = filas.map((f) => f.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(";")).join("\r\n");
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "confirmaciones-comunion-niobe.csv";
+  a.click();
+});
+
+// Descargar todas las fotos en un ZIP
+$("#btn-zip").addEventListener("click", async () => {
+  const estado = $("#estado-zip");
+  if (!listaFotos.length) return (estado.textContent = "No hay fotos todavía.");
+  const zip = new JSZip();
+  for (const [i, f] of listaFotos.entries()) {
+    estado.textContent = `Preparando foto ${i + 1} de ${listaFotos.length}…`;
+    const imagen = await datos.leerFotoGrande(f.id);
+    if (!imagen) continue;
+    const autor = (f.nombre || "invitado").replace(/[^\p{L}\p{N} _-]/gu, "").trim() || "invitado";
+    zip.file(`${String(i + 1).padStart(3, "0")}-${autor}.jpg`, imagen.split(",")[1], { base64: true });
+  }
+  estado.textContent = "Creando el ZIP…";
+  const blob = await zip.generateAsync({ type: "blob" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "fotos-comunion-niobe.zip";
+  a.click();
+  estado.textContent = "¡Descargado!";
+});
+
+// Diseño de la web
+let temaElegido = "clasico";
+const urlDisenos = new URL("./?disenos", location.href).href;
+$("#enlace-disenos").href = urlDisenos;
+$("#enlace-disenos").textContent = urlDisenos;
+
+function pintarAjustes(ajustes) {
+  temaElegido = ajustes.tema || "clasico";
+  $("#admin-selector").checked = !!ajustes.selector;
+  pintarOpcionesDiseno();
+}
+
+function pintarOpcionesDiseno() {
+  $("#admin-disenos").innerHTML = temas
+    .map(
+      (t) => `
+      <button type="button" class="opcion-diseno ${t.id === temaElegido ? "activa" : ""}" data-tema="${t.id}">
+        <span class="muestras">${t.colores.map((c) => `<i style="background:${c}"></i>`).join("")}</span>
+        ${esc(t.nombre)}
+      </button>`
+    )
+    .join("");
+}
+
+$("#admin-disenos").addEventListener("click", (e) => {
+  const id = e.target.closest("[data-tema]")?.dataset.tema;
+  if (!id) return;
+  temaElegido = id;
+  pintarOpcionesDiseno();
+  $("#estado-diseno").textContent = "";
+});
+
+$("#btn-guardar-diseno").addEventListener("click", async () => {
+  const estado = $("#estado-diseno");
+  try {
+    await datos.guardarAjustes({ tema: temaElegido, selector: $("#admin-selector").checked });
+    const nombre = temas.find((t) => t.id === temaElegido)?.nombre;
+    estado.textContent = `Guardado. La web ya se ve con el diseño "${nombre}".`;
+    estado.classList.remove("error");
+  } catch (e) {
+    console.error(e);
+    estado.textContent = "No se ha podido guardar.";
+    estado.classList.add("error");
+  }
+});
